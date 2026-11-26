@@ -1,13 +1,69 @@
-#include "AVLTree.h"
+#include "API.h"
+#include "WarehouseManager.h"
+#include "EventManager.h"
 #include <iostream>
 #include <string>
-#include <sstream>
 #include <vector>
-#include <chrono>
+#include <sstream>
 
 using namespace rangex;
 
-void printBanner() {
+void printServerBanner(int port) {
+    std::cout << "================================================================\n";
+    std::cout << "   RANGEX - INTELLIGENT WAREHOUSE ARRIVAL INDEX BACKEND         \n";
+    std::cout << "   C++17 AVL Tree Engine | Crow Framework | WebSockets          \n";
+    std::cout << "================================================================\n";
+    std::cout << "  HTTP REST API:    http://localhost:" << port << "/api\n";
+    std::cout << "  WebSocket Stream: ws://localhost:" << port << "/ws/events\n";
+    std::cout << "  SSE Stream:       http://localhost:" << port << "/api/events\n";
+    std::cout << "  Arrival Endpoint: POST http://localhost:" << port << "/api/packages/arrival\n";
+    std::cout << "  Tree Snapshot:    GET  http://localhost:" << port << "/api/tree\n";
+    std::cout << "  Intervals API:    GET  http://localhost:" << port << "/api/intervals\n";
+    std::cout << "  Missing API:      GET  http://localhost:" << port << "/api/missing?low=1&high=100\n";
+    std::cout << "  Search API:       GET  http://localhost:" << port << "/api/packages/search?id=5\n";
+    std::cout << "  Statistics API:   GET  http://localhost:" << port << "/api/statistics\n";
+    std::cout << "  Reset API:        POST http://localhost:" << port << "/api/reset\n";
+    std::cout << "================================================================\n";
+    std::cout << "  Ready to accept connections from React frontend visualizer...\n\n";
+}
+
+void runDemo(WarehouseManager& wm) {
+    wm.reset();
+    std::cout << "\n--- DEMO: RANGEX Problem Scenario & Bridge Merge ---\n";
+    std::cout << "Step 1: Warehouse receives packages 1, 2, 3, 6, 7, 8\n";
+    std::vector<long long> initial = {1, 2, 3, 6, 7, 8};
+    for (long long id : initial) {
+        wm.processPackageArrival(id);
+    }
+    std::cout << "Current Intervals: ";
+    for (const auto& iv : wm.getAllIntervals()) std::cout << iv.toString() << " ";
+    std::cout << "\nExpected: [1, 3] [6, 8]\n\n";
+
+    std::cout << "Step 2: Incoming package 4 arrives\n";
+    ArrivalResult r4 = wm.processPackageArrival(4);
+    std::cout << "Status: " << r4.status << " - " << r4.message << "\n";
+    std::cout << "Events captured: " << r4.events.size() << "\n";
+    std::cout << "Current Intervals: ";
+    for (const auto& iv : wm.getAllIntervals()) std::cout << iv.toString() << " ";
+    std::cout << "\nExpected: [1, 4] [6, 8]\n\n";
+
+    std::cout << "Step 3: Incoming package 5 arrives (BRIDGE MERGE)\n";
+    ArrivalResult r5 = wm.processPackageArrival(5);
+    std::cout << "Status: " << r5.status << " - " << r5.message << "\n";
+    std::cout << "Algorithm Events for package 5:\n";
+    for (const auto& ev : r5.events) {
+        std::cout << "  [" << ev.sequenceNumber << "] " << ev.eventType << ": " << ev.message << "\n";
+    }
+    std::cout << "Current Intervals: ";
+    for (const auto& iv : wm.getAllIntervals()) std::cout << iv.toString() << " ";
+    std::cout << "\nExpected: [1, 8]\n";
+    std::cout << "Tree Snapshot JSON:\n" << wm.getTreeSnapshotJson() << "\n\n";
+
+    auto stats = wm.getStatistics(1, 10);
+    std::cout << "Statistics:\n" << stats.toJson() << "\n\n";
+}
+
+int runCliMode(WarehouseManager& wm) {
     std::cout << "========================================================\n";
     std::cout << "   RANGEX - INTELLIGENT WAREHOUSE ARRIVAL INDEX         \n";
     std::cout << "   Custom AVL Tree Core Engine (C++17)                  \n";
@@ -18,105 +74,11 @@ void printBanner() {
     std::cout << "  intervals             - Display all consecutive intervals\n";
     std::cout << "  missing <start> <end> - Query missing intervals in range\n";
     std::cout << "  snapshot              - Output AVL tree JSON snapshot\n";
-    std::cout << "  events                - Output recorded algorithm events (JSON)\n";
     std::cout << "  stats                 - Show package and interval statistics\n";
     std::cout << "  demo                  - Run problem demonstration\n";
     std::cout << "  clear                 - Reset tree index\n";
     std::cout << "  exit / quit           - Terminate engine\n";
     std::cout << "========================================================\n\n";
-}
-
-void runDemo(AVLTree& tree) {
-    tree.clear();
-    std::cout << "\n--- DEMO: RANGEX Problem Scenario ---\n";
-    std::cout << "Step 1: Warehouse receives packages 1, 2, 3, 6, 7, 8\n";
-    std::vector<long long> initial = {1, 2, 3, 6, 7, 8};
-    for (long long id : initial) {
-        tree.clearEvents();
-        tree.processPackageArrival(id);
-    }
-    std::cout << "Current Intervals: ";
-    for (const auto& iv : tree.getAllIntervals()) std::cout << iv.toString() << " ";
-    std::cout << "\nExpected: [1, 3] [6, 8]\n\n";
-
-    std::cout << "Step 2: Incoming package 4 arrives\n";
-    tree.clearEvents();
-    tree.processPackageArrival(4);
-    std::cout << "Algorithm Events for package 4:\n";
-    for (const auto& ev : tree.getLogger().getEvents()) {
-        std::cout << "  - " << eventTypeToString(ev.type) << ": " << ev.message << "\n";
-    }
-    std::cout << "Current Intervals: ";
-    for (const auto& iv : tree.getAllIntervals()) std::cout << iv.toString() << " ";
-    std::cout << "\nExpected: [1, 4] [6, 8]\n\n";
-
-    std::cout << "Step 3: Incoming package 5 arrives (BRIDGE MERGE)\n";
-    tree.clearEvents();
-    tree.processPackageArrival(5);
-    std::cout << "Algorithm Events for package 5:\n";
-    for (const auto& ev : tree.getLogger().getEvents()) {
-        std::cout << "  - " << eventTypeToString(ev.type) << ": " << ev.message << "\n";
-    }
-    std::cout << "Current Intervals: ";
-    for (const auto& iv : tree.getAllIntervals()) std::cout << iv.toString() << " ";
-    std::cout << "\nExpected: [1, 8]\n";
-    std::cout << "Tree Snapshot JSON:\n" << tree.getTreeSnapshotJson() << "\n\n";
-}
-
-int main(int argc, char* argv[]) {
-    AVLTree tree;
-
-    // Check for CLI flags
-    if (argc > 1) {
-        std::string arg = argv[1];
-        if (arg == "--demo") {
-            runDemo(tree);
-            return 0;
-        } else if (arg == "--snapshot") {
-            std::cout << tree.getTreeSnapshotJson() << std::endl;
-            return 0;
-        } else if (arg == "--batch") {
-            // JSON pipe API mode for frontend integrations
-            std::string line;
-            while (std::getline(std::cin, line)) {
-                if (line.empty()) continue;
-                std::istringstream iss(line);
-                std::string cmd;
-                iss >> cmd;
-                if (cmd == "insert") {
-                    long long id;
-                    iss >> id;
-                    tree.clearEvents();
-                    bool added = tree.processPackageArrival(id);
-                    std::cout << "{\"status\":\"ok\",\"added\":" << (added ? "true" : "false")
-                              << ",\"events\":" << tree.getLogger().toJson()
-                              << ",\"snapshot\":" << tree.getTreeSnapshotJson()
-                              << ",\"intervals\":[";
-                    auto ivs = tree.getAllIntervals();
-                    for (size_t i = 0; i < ivs.size(); ++i) {
-                        if (i > 0) std::cout << ",";
-                        std::cout << ivs[i].toJson();
-                    }
-                    std::cout << "],\"totalPackages\":" << tree.getTotalPackageCount()
-                              << ",\"intervalCount\":" << tree.getIntervalCount() << "}\n" << std::flush;
-                } else if (cmd == "contains") {
-                    long long id;
-                    iss >> id;
-                    std::cout << "{\"contains\":" << (tree.containsPackage(id) ? "true" : "false") << "}\n" << std::flush;
-                } else if (cmd == "snapshot") {
-                    std::cout << tree.getTreeSnapshotJson() << "\n" << std::flush;
-                } else if (cmd == "clear") {
-                    tree.clear();
-                    std::cout << "{\"status\":\"cleared\"}\n" << std::flush;
-                } else if (cmd == "exit" || cmd == "quit") {
-                    break;
-                }
-            }
-            return 0;
-        }
-    }
-
-    printBanner();
 
     std::string line;
     std::cout << "rangex> ";
@@ -136,28 +98,23 @@ int main(int argc, char* argv[]) {
         } else if (cmd == "insert") {
             long long id;
             if (iss >> id) {
-                tree.clearEvents();
-                bool added = tree.processPackageArrival(id);
-                std::cout << (added ? " [✓] Package ID " : " [!] Duplicate package ID ")
-                          << id << (added ? " processed." : " ignored.") << "\n";
-                std::cout << " Events:\n";
-                for (const auto& ev : tree.getLogger().getEvents()) {
-                    std::cout << "   " << eventTypeToString(ev.type) << ": " << ev.message << "\n";
-                }
+                auto res = wm.processPackageArrival(id);
+                std::cout << (res.success ? " [✓] Package ID " : " [!] Duplicate/Invalid package ID ")
+                          << id << " " << res.status << ": " << res.message << "\n";
             } else {
                 std::cout << "Usage: insert <id>\n";
             }
         } else if (cmd == "contains") {
             long long id;
             if (iss >> id) {
-                bool found = tree.containsPackage(id);
-                std::cout << (found ? "Package " + std::to_string(id) + " is PRESENT."
-                                    : "Package " + std::to_string(id) + " is NOT present.") << "\n";
+                auto s = wm.searchPackage(id);
+                std::cout << (s.exists ? "Package " + std::to_string(id) + " is PRESENT."
+                                       : "Package " + std::to_string(id) + " is NOT present.") << "\n";
             } else {
                 std::cout << "Usage: contains <id>\n";
             }
         } else if (cmd == "intervals") {
-            auto intervals = tree.getAllIntervals();
+            auto intervals = wm.getAllIntervals();
             std::cout << "Consecutive Intervals (" << intervals.size() << "):\n";
             for (const auto& iv : intervals) {
                 std::cout << "  " << iv.toString() << " (length: " << iv.length() << ")\n";
@@ -165,7 +122,7 @@ int main(int argc, char* argv[]) {
         } else if (cmd == "missing") {
             long long qStart, qEnd;
             if (iss >> qStart >> qEnd) {
-                auto missing = tree.getMissingIntervals(qStart, qEnd);
+                auto missing = wm.getMissingIntervals(qStart, qEnd);
                 std::cout << "Missing Intervals in [" << qStart << ", " << qEnd << "] (" << missing.size() << "):\n";
                 for (const auto& iv : missing) {
                     std::cout << "  " << iv.toString() << "\n";
@@ -174,24 +131,104 @@ int main(int argc, char* argv[]) {
                 std::cout << "Usage: missing <start> <end>\n";
             }
         } else if (cmd == "snapshot") {
-            std::cout << tree.getTreeSnapshotJson() << "\n";
-        } else if (cmd == "events") {
-            std::cout << tree.getLogger().toJson() << "\n";
+            std::cout << wm.getTreeSnapshotJson() << "\n";
         } else if (cmd == "stats") {
-            std::cout << "Total Received Packages: " << tree.getTotalPackageCount() << "\n";
-            std::cout << "Total Intervals:         " << tree.getIntervalCount() << "\n";
-            std::cout << "Tree Root Height:        " << (tree.getRoot() ? tree.getHeight(tree.getRoot()) : 0) << "\n";
+            std::cout << wm.getStatistics().toJson() << "\n";
         } else if (cmd == "demo") {
-            runDemo(tree);
+            runDemo(wm);
         } else if (cmd == "clear") {
-            tree.clear();
+            wm.reset();
             std::cout << "Warehouse index cleared.\n";
         } else {
-            std::cout << "Unknown command: " << cmd << ". Type 'demo' or 'insert <id>' or 'intervals'.\n";
+            std::cout << "Unknown command: " << cmd << ". Type 'demo', 'insert <id>', 'intervals', etc.\n";
         }
 
         std::cout << "rangex> ";
     }
+    return 0;
+}
+
+int main(int argc, char* argv[]) {
+    int port = 8080;
+    bool demoMode = false;
+    bool cliMode = false;
+    bool snapshotMode = false;
+    bool batchMode = false;
+
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--port" && i + 1 < argc) {
+            port = std::stoi(argv[++i]);
+        } else if (arg == "--demo") {
+            demoMode = true;
+        } else if (arg == "--cli") {
+            cliMode = true;
+        } else if (arg == "--snapshot") {
+            snapshotMode = true;
+        } else if (arg == "--batch") {
+            batchMode = true;
+        } else if (arg == "--help" || arg == "-h") {
+            std::cout << "Usage: rangex_server [options]\n"
+                      << "  --port <port>   Specify server port (default: 8080)\n"
+                      << "  --demo          Run offline demonstration and exit\n"
+                      << "  --cli           Run interactive CLI terminal interface\n"
+                      << "  --snapshot      Output AVL tree JSON snapshot and exit\n"
+                      << "  --batch         Run JSON pipe API mode for stdin/stdout\n"
+                      << "  --help, -h      Display this help message\n";
+            return 0;
+        }
+    }
+
+    EventManager eventManager;
+    WarehouseManager warehouseManager(eventManager);
+
+    if (snapshotMode) {
+        std::cout << warehouseManager.getTreeSnapshotJson() << std::endl;
+        return 0;
+    }
+
+    if (demoMode) {
+        runDemo(warehouseManager);
+        return 0;
+    }
+
+    if (cliMode) {
+        return runCliMode(warehouseManager);
+    }
+
+    if (batchMode) {
+        std::string line;
+        while (std::getline(std::cin, line)) {
+            if (line.empty()) continue;
+            std::istringstream iss(line);
+            std::string cmd;
+            iss >> cmd;
+            if (cmd == "insert") {
+                long long id;
+                iss >> id;
+                auto res = warehouseManager.processPackageArrival(id);
+                std::cout << res.toJson() << "\n" << std::flush;
+            } else if (cmd == "contains") {
+                long long id;
+                iss >> id;
+                auto s = warehouseManager.searchPackage(id);
+                std::cout << s.toJson() << "\n" << std::flush;
+            } else if (cmd == "snapshot") {
+                std::cout << warehouseManager.getTreeSnapshotJson() << "\n" << std::flush;
+            } else if (cmd == "clear") {
+                warehouseManager.reset();
+                std::cout << "{\"status\":\"cleared\"}\n" << std::flush;
+            } else if (cmd == "exit" || cmd == "quit") {
+                break;
+            }
+        }
+        return 0;
+    }
+
+    printServerBanner(port);
+
+    API api(warehouseManager, eventManager, port);
+    api.run();
 
     return 0;
 }
