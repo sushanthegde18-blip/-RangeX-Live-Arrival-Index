@@ -1,0 +1,403 @@
+import type {
+  AvlTreeSnapshot,
+  IntervalRange,
+  PackageRegistrationResult,
+  WarehouseAnalytics,
+} from '../contracts/api'
+
+/**
+ * Static visual development fixtures ONLY.
+ * Never presented as live C++ backend data; gated behind an explicit
+ * `DEV FIXTURE PREVIEW` mode for UI & animation inspection while Member 2's
+ * backend is under development.
+ */
+export interface FixtureStoryboardFrame {
+  stepIndex: number
+  label: string
+  description: string
+  packageId: number | null
+  intervals: IntervalRange[]
+  arrivalResult: PackageRegistrationResult | null
+  avlSnapshot: AvlTreeSnapshot
+  analytics: WarehouseAnalytics
+}
+
+const baseTimestamp = '2026-11-26T11:00:00.000Z'
+
+export const VISUAL_FIXTURE_STORYBOARD: FixtureStoryboardFrame[] = [
+  {
+    stepIndex: 0,
+    label: 'Baseline State — [1,3] [6,8]',
+    description: 'Two disjoint arrival spans staged in Bays A & B awaiting next package.',
+    packageId: null,
+    intervals: [
+      { id: '1-3', start: 1, end: 3, zone: 'BAY-A1', packageCount: 3, lastUpdatedAt: baseTimestamp },
+      { id: '6-8', start: 6, end: 8, zone: 'BAY-B2', packageCount: 3, lastUpdatedAt: baseTimestamp },
+    ],
+    arrivalResult: null,
+    avlSnapshot: {
+      rootId: '1-3',
+      height: 2,
+      nodeCount: 2,
+      revision: 1,
+      updatedAt: baseTimestamp,
+      nodes: [
+        {
+          id: '1-3',
+          interval: { id: '1-3', start: 1, end: 3, zone: 'BAY-A1', packageCount: 3 },
+          height: 2,
+          balanceFactor: -1,
+          leftId: null,
+          rightId: '6-8',
+          parentId: null,
+          depth: 0,
+        },
+        {
+          id: '6-8',
+          interval: { id: '6-8', start: 6, end: 8, zone: 'BAY-B2', packageCount: 3 },
+          height: 1,
+          balanceFactor: 0,
+          leftId: null,
+          rightId: null,
+          parentId: '1-3',
+          depth: 1,
+        },
+      ],
+    },
+    analytics: {
+      totalPackages: 6,
+      activeIntervals: 2,
+      mergedCount: 1,
+      extendedCount: 3,
+      createdCount: 2,
+      compressionRatio: 3.0,
+      avlHeight: 2,
+      rotationCount: 0,
+      avgLookupMicros: 1.4,
+      minId: 1,
+      maxId: 8,
+      recentThroughput: [
+        { timestamp: '10:55', arrivals: 2, merges: 0 },
+        { timestamp: '10:56', arrivals: 1, merges: 0 },
+        { timestamp: '10:58', arrivals: 3, merges: 1 },
+      ],
+      updatedAt: baseTimestamp,
+    },
+  },
+  {
+    stepIndex: 1,
+    label: 'Insert #4 — Extended [1,4] [6,8]',
+    description: 'Package #4 extends interval [1,3] to [1,4]. No AVL rotation required.',
+    packageId: 4,
+    intervals: [
+      { id: '1-4', start: 1, end: 4, zone: 'BAY-A1', packageCount: 4, lastUpdatedAt: baseTimestamp },
+      { id: '6-8', start: 6, end: 8, zone: 'BAY-B2', packageCount: 3, lastUpdatedAt: baseTimestamp },
+    ],
+    arrivalResult: {
+      packageId: 4,
+      mutationType: 'EXTENDED',
+      targetInterval: { id: '1-4', start: 1, end: 4, zone: 'BAY-A1', packageCount: 4 },
+      previousIntervals: [
+        { id: '1-3', start: 1, end: 3, zone: 'BAY-A1', packageCount: 3 },
+        { id: '6-8', start: 6, end: 8, zone: 'BAY-B2', packageCount: 3 },
+      ],
+      intervals: [
+        { id: '1-4', start: 1, end: 4, zone: 'BAY-A1', packageCount: 4 },
+        { id: '6-8', start: 6, end: 8, zone: 'BAY-B2', packageCount: 3 },
+      ],
+      searchPath: ['1-3'],
+      highlightedNodeIds: ['1-4'],
+      rotation: { type: 'NONE' },
+      timestamp: '2026-11-26T11:01:00.000Z',
+      eventId: 'fixture-step-1',
+      isFixture: true,
+    },
+    avlSnapshot: {
+      rootId: '1-4',
+      height: 2,
+      nodeCount: 2,
+      revision: 2,
+      updatedAt: '2026-11-26T11:01:00.000Z',
+      nodes: [
+        {
+          id: '1-4',
+          interval: { id: '1-4', start: 1, end: 4, zone: 'BAY-A1', packageCount: 4 },
+          height: 2,
+          balanceFactor: -1,
+          leftId: null,
+          rightId: '6-8',
+          parentId: null,
+          depth: 0,
+        },
+        {
+          id: '6-8',
+          interval: { id: '6-8', start: 6, end: 8, zone: 'BAY-B2', packageCount: 3 },
+          height: 1,
+          balanceFactor: 0,
+          leftId: null,
+          rightId: null,
+          parentId: '1-4',
+          depth: 1,
+        },
+      ],
+    },
+    analytics: {
+      totalPackages: 7,
+      activeIntervals: 2,
+      mergedCount: 1,
+      extendedCount: 4,
+      createdCount: 2,
+      compressionRatio: 3.5,
+      avlHeight: 2,
+      rotationCount: 0,
+      avgLookupMicros: 1.2,
+      minId: 1,
+      maxId: 8,
+      recentThroughput: [
+        { timestamp: '10:55', arrivals: 2, merges: 0 },
+        { timestamp: '10:58', arrivals: 3, merges: 1 },
+        { timestamp: '11:01', arrivals: 1, merges: 0 },
+      ],
+      updatedAt: '2026-11-26T11:01:00.000Z',
+    },
+  },
+  {
+    stepIndex: 2,
+    label: 'Insert #5 — Merged [1,8]',
+    description:
+      'Package #5 bridges [1,4] and [6,8] into unified span [1,8]. Note: this merge fixture demonstrates height shrink without rotation.',
+    packageId: 5,
+    intervals: [
+      { id: '1-8', start: 1, end: 8, zone: 'BAY-A1', packageCount: 8, lastUpdatedAt: baseTimestamp },
+    ],
+    arrivalResult: {
+      packageId: 5,
+      mutationType: 'MERGED',
+      targetInterval: { id: '1-8', start: 1, end: 8, zone: 'BAY-A1', packageCount: 8 },
+      previousIntervals: [
+        { id: '1-4', start: 1, end: 4, zone: 'BAY-A1', packageCount: 4 },
+        { id: '6-8', start: 6, end: 8, zone: 'BAY-B2', packageCount: 3 },
+      ],
+      intervals: [
+        { id: '1-8', start: 1, end: 8, zone: 'BAY-A1', packageCount: 8 },
+      ],
+      mergedFrom: [
+        { id: '1-4', start: 1, end: 4, zone: 'BAY-A1', packageCount: 4 },
+        { id: '6-8', start: 6, end: 8, zone: 'BAY-B2', packageCount: 3 },
+      ],
+      searchPath: ['1-4', '6-8'],
+      highlightedNodeIds: ['1-8'],
+      rotation: { type: 'NONE' },
+      timestamp: '2026-11-26T11:02:00.000Z',
+      eventId: 'fixture-step-2',
+      isFixture: true,
+    },
+    avlSnapshot: {
+      rootId: '1-8',
+      height: 1,
+      nodeCount: 1,
+      revision: 3,
+      updatedAt: '2026-11-26T11:02:00.000Z',
+      nodes: [
+        {
+          id: '1-8',
+          interval: { id: '1-8', start: 1, end: 8, zone: 'BAY-A1', packageCount: 8 },
+          height: 1,
+          balanceFactor: 0,
+          leftId: null,
+          rightId: null,
+          parentId: null,
+          depth: 0,
+        },
+      ],
+    },
+    analytics: {
+      totalPackages: 8,
+      activeIntervals: 1,
+      mergedCount: 2,
+      extendedCount: 4,
+      createdCount: 2,
+      compressionRatio: 8.0,
+      avlHeight: 1,
+      rotationCount: 0,
+      avgLookupMicros: 0.9,
+      minId: 1,
+      maxId: 8,
+      recentThroughput: [
+        { timestamp: '10:58', arrivals: 3, merges: 1 },
+        { timestamp: '11:01', arrivals: 1, merges: 0 },
+        { timestamp: '11:02', arrivals: 1, merges: 1 },
+      ],
+      updatedAt: '2026-11-26T11:02:00.000Z',
+    },
+  },
+  {
+    stepIndex: 3,
+    label: 'Insert #14 — Created [14,14]',
+    description: 'Disjoint package #14 allocates a new interval bay [14,14] in Bay C1.',
+    packageId: 14,
+    intervals: [
+      { id: '1-8', start: 1, end: 8, zone: 'BAY-A1', packageCount: 8, lastUpdatedAt: baseTimestamp },
+      { id: '14-14', start: 14, end: 14, zone: 'BAY-C1', packageCount: 1, lastUpdatedAt: baseTimestamp },
+    ],
+    arrivalResult: {
+      packageId: 14,
+      mutationType: 'CREATED',
+      targetInterval: { id: '14-14', start: 14, end: 14, zone: 'BAY-C1', packageCount: 1 },
+      previousIntervals: [{ id: '1-8', start: 1, end: 8, zone: 'BAY-A1', packageCount: 8 }],
+      intervals: [
+        { id: '1-8', start: 1, end: 8, zone: 'BAY-A1', packageCount: 8 },
+        { id: '14-14', start: 14, end: 14, zone: 'BAY-C1', packageCount: 1 },
+      ],
+      searchPath: ['1-8'],
+      highlightedNodeIds: ['14-14'],
+      rotation: { type: 'NONE' },
+      timestamp: '2026-11-26T11:03:00.000Z',
+      eventId: 'fixture-step-3',
+      isFixture: true,
+    },
+    avlSnapshot: {
+      rootId: '1-8',
+      height: 2,
+      nodeCount: 2,
+      revision: 4,
+      updatedAt: '2026-11-26T11:03:00.000Z',
+      nodes: [
+        {
+          id: '1-8',
+          interval: { id: '1-8', start: 1, end: 8, zone: 'BAY-A1', packageCount: 8 },
+          height: 2,
+          balanceFactor: -1,
+          leftId: null,
+          rightId: '14-14',
+          parentId: null,
+          depth: 0,
+        },
+        {
+          id: '14-14',
+          interval: { id: '14-14', start: 14, end: 14, zone: 'BAY-C1', packageCount: 1 },
+          height: 1,
+          balanceFactor: 0,
+          leftId: null,
+          rightId: null,
+          parentId: '1-8',
+          depth: 1,
+        },
+      ],
+    },
+    analytics: {
+      totalPackages: 9,
+      activeIntervals: 2,
+      mergedCount: 2,
+      extendedCount: 4,
+      createdCount: 3,
+      compressionRatio: 4.5,
+      avlHeight: 2,
+      rotationCount: 0,
+      avgLookupMicros: 1.1,
+      minId: 1,
+      maxId: 14,
+      recentThroughput: [
+        { timestamp: '11:01', arrivals: 1, merges: 0 },
+        { timestamp: '11:02', arrivals: 1, merges: 1 },
+        { timestamp: '11:03', arrivals: 1, merges: 0 },
+      ],
+      updatedAt: '2026-11-26T11:03:00.000Z',
+    },
+  },
+  {
+    stepIndex: 4,
+    label: 'Insert #22 — Created [22,22] + RR Rotation',
+    description:
+      'Fixture demonstrates a backend-reported RR (Left) rotation on pivot [14,14] after inserting #22.',
+    packageId: 22,
+    intervals: [
+      { id: '1-8', start: 1, end: 8, zone: 'BAY-A1', packageCount: 8, lastUpdatedAt: baseTimestamp },
+      { id: '14-14', start: 14, end: 14, zone: 'BAY-C1', packageCount: 1, lastUpdatedAt: baseTimestamp },
+      { id: '22-22', start: 22, end: 22, zone: 'BAY-D1', packageCount: 1, lastUpdatedAt: baseTimestamp },
+    ],
+    arrivalResult: {
+      packageId: 22,
+      mutationType: 'CREATED',
+      targetInterval: { id: '22-22', start: 22, end: 22, zone: 'BAY-D1', packageCount: 1 },
+      previousIntervals: [
+        { id: '1-8', start: 1, end: 8, zone: 'BAY-A1', packageCount: 8 },
+        { id: '14-14', start: 14, end: 14, zone: 'BAY-C1', packageCount: 1 },
+      ],
+      intervals: [
+        { id: '1-8', start: 1, end: 8, zone: 'BAY-A1', packageCount: 8 },
+        { id: '14-14', start: 14, end: 14, zone: 'BAY-C1', packageCount: 1 },
+        { id: '22-22', start: 22, end: 22, zone: 'BAY-D1', packageCount: 1 },
+      ],
+      searchPath: ['1-8', '14-14'],
+      highlightedNodeIds: ['14-14', '22-22'],
+      rotation: {
+        type: 'RR',
+        pivotNodeId: '14-14',
+        affectedNodeIds: ['1-8', '14-14', '22-22'],
+        reason: 'Fixture rotation cue: balance factor -2 resolved via single left rotation',
+      },
+      timestamp: '2026-11-26T11:04:00.000Z',
+      eventId: 'fixture-step-4',
+      isFixture: true,
+    },
+    avlSnapshot: {
+      rootId: '14-14',
+      height: 2,
+      nodeCount: 3,
+      revision: 5,
+      updatedAt: '2026-11-26T11:04:00.000Z',
+      nodes: [
+        {
+          id: '14-14',
+          interval: { id: '14-14', start: 14, end: 14, zone: 'BAY-C1', packageCount: 1 },
+          height: 2,
+          balanceFactor: 0,
+          leftId: '1-8',
+          rightId: '22-22',
+          parentId: null,
+          depth: 0,
+        },
+        {
+          id: '1-8',
+          interval: { id: '1-8', start: 1, end: 8, zone: 'BAY-A1', packageCount: 8 },
+          height: 1,
+          balanceFactor: 0,
+          leftId: null,
+          rightId: null,
+          parentId: '14-14',
+          depth: 1,
+        },
+        {
+          id: '22-22',
+          interval: { id: '22-22', start: 22, end: 22, zone: 'BAY-D1', packageCount: 1 },
+          height: 1,
+          balanceFactor: 0,
+          leftId: null,
+          rightId: null,
+          parentId: '14-14',
+          depth: 1,
+        },
+      ],
+    },
+    analytics: {
+      totalPackages: 10,
+      activeIntervals: 3,
+      mergedCount: 2,
+      extendedCount: 4,
+      createdCount: 4,
+      compressionRatio: 3.33,
+      avlHeight: 2,
+      rotationCount: 1,
+      avgLookupMicros: 1.5,
+      minId: 1,
+      maxId: 22,
+      recentThroughput: [
+        { timestamp: '11:02', arrivals: 1, merges: 1 },
+        { timestamp: '11:03', arrivals: 1, merges: 0 },
+        { timestamp: '11:04', arrivals: 1, merges: 0 },
+      ],
+      updatedAt: '2026-11-26T11:04:00.000Z',
+    },
+  },
+]
