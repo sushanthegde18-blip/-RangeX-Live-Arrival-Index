@@ -1,111 +1,64 @@
-cmake_minimum_required(VERSION 3.15)
-project(RangeX_Backend VERSION 1.0.0 LANGUAGES CXX)
-
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
-
-if(MSVC)
-    add_compile_options(/W4 /O2 /permissive-)
-    add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
-else()
-    add_compile_options(-Wall -Wextra -Wpedantic -O3)
-endif()
-
-find_package(Threads REQUIRED)
-
-include(FetchContent)
-
-# Provide standalone Asio (header-only) for Crow
-FetchContent_Declare(
-    asio
-    GIT_REPOSITORY https://github.com/chriskohlhoff/asio.git
-    GIT_TAG asio-1-28-0
-)
-FetchContent_GetProperties(asio)
-if(NOT asio_POPULATED)
-    FetchContent_Populate(asio)
-    add_library(asio INTERFACE)
-    add_library(asio::asio ALIAS asio)
-    target_include_directories(asio INTERFACE ${asio_SOURCE_DIR}/asio/include)
-    target_compile_definitions(asio INTERFACE ASIO_STANDALONE)
-    set(ASIO_INCLUDE_DIR "${asio_SOURCE_DIR}/asio/include" CACHE PATH "asio include dir" FORCE)
-endif()
-
-# Crow Framework options
-set(CROW_INSTALL OFF CACHE BOOL "" FORCE)
-set(CROW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(CROW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-
-find_package(Crow QUIET)
-if(NOT Crow_FOUND)
-    FetchContent_Declare(
-        Crow
-        GIT_REPOSITORY https://github.com/CrowCpp/Crow.git
-        GIT_TAG v1.2.0
-    )
-    FetchContent_MakeAvailable(Crow)
-endif()
-
-# Core AVL, Warehouse, and Event Library
-add_library(rangex_core
-    src/AVLTree.cpp
-    src/EventManager.cpp
-    src/WarehouseManager.cpp
+add_library(rangex_backend_lib STATIC
+    src/backend_service.cpp
 )
 
-target_include_directories(rangex_core PUBLIC
-    include
-    thirdparty
-    ${ASIO_INCLUDE_DIR}
+target_include_directories(rangex_backend_lib
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    SYSTEM PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/json
 )
 
-target_compile_definitions(rangex_core PUBLIC ASIO_STANDALONE)
+target_link_libraries(rangex_backend_lib
+    PUBLIC
+        rangex_core
+)
 
-target_link_libraries(rangex_core PUBLIC
-    Threads::Threads
-    asio
-    $<$<TARGET_EXISTS:Crow::Crow>:Crow::Crow>
+target_compile_features(rangex_backend_lib PUBLIC cxx_std_17)
+
+add_executable(rangex_backend
+    src/main.cpp
+)
+
+target_include_directories(rangex_backend
+    SYSTEM PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/crow
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/asio
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/json
+)
+
+target_compile_definitions(rangex_backend
+    PRIVATE
+        ASIO_STANDALONE
+        CROW_DISABLE_STATIC_DIR
 )
 
 if(WIN32)
-    target_link_libraries(rangex_core PUBLIC ws2_32 wsock32)
+    target_compile_definitions(rangex_backend
+        PRIVATE
+            WIN32_LEAN_AND_MEAN
+            NOMINMAX
+            _WIN32_WINNT=0x0601
+    )
+    target_link_libraries(rangex_backend
+        PRIVATE
+            rangex_backend_lib
+            ws2_32
+            mswsock
+    )
+else()
+    find_package(Threads REQUIRED)
+    target_link_libraries(rangex_backend
+        PRIVATE
+            rangex_backend_lib
+            Threads::Threads
+    )
 endif()
 
-# Member 1: Interactive CLI Application
-add_executable(rangex_cli
-    src/cli.cpp
-)
-target_link_libraries(rangex_cli PRIVATE rangex_core)
-
-# Member 2: Full Web Backend & WebSocket Server
-add_executable(rangex_server
-    src/API.cpp
-    src/main.cpp
-)
-target_link_libraries(rangex_server PRIVATE
-    rangex_core
-    $<$<TARGET_EXISTS:Crow::Crow>:Crow::Crow>
-)
-
-# Test Suites
-enable_testing()
-
-# Member 1 AVL Test Suite (both rangex_test and rangex_test_avl for backward compatibility)
-add_executable(rangex_test
-    tests/test_avl.cpp
-)
-target_link_libraries(rangex_test PRIVATE rangex_core)
-add_test(NAME AVLCoreTests COMMAND rangex_test)
-
-add_executable(rangex_test_avl
-    tests/test_avl.cpp
-)
-target_link_libraries(rangex_test_avl PRIVATE rangex_core)
-
-# Member 2 Backend API & Concurrency Test Suite
-add_executable(rangex_test_backend
-    tests/test_backend.cpp
-)
-target_link_libraries(rangex_test_backend PRIVATE rangex_core)
-add_test(NAME BackendAPITests COMMAND rangex_test_backend)
+if(RANGEX_BUILD_TESTS)
+    add_executable(rangex_backend_tests
+        tests/backend_service_tests.cpp
+    )
+    target_link_libraries(rangex_backend_tests PRIVATE rangex_backend_lib)
+    add_test(NAME rangex_backend_tests COMMAND rangex_backend_tests)
+endif()

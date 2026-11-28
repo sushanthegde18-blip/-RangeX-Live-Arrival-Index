@@ -8,8 +8,13 @@ export interface ApiEndpointsConfig {
   routes: {
     registerPackage: string
     intervals: string
-    avlSnapshot: string
-    analytics: string
+    gaps: string
+    stats: string
+    tree: string
+    events: string
+    simulate: string
+    bulkArrivals: string
+    reset: string
     health: string
   }
 }
@@ -17,10 +22,8 @@ export interface ApiEndpointsConfig {
 const rawBaseUrl = (import.meta.env.VITE_RANGEX_API_BASE_URL as string | undefined) || '/api'
 const normalizedBase = rawBaseUrl.replace(/\/+$/, '')
 
-const rawEventsUrl =
-  (import.meta.env.VITE_RANGEX_EVENTS_URL as string | undefined) || `${normalizedBase}/events`
-
-const rawTransport = (import.meta.env.VITE_RANGEX_EVENT_TRANSPORT as string | undefined) || 'auto'
+const rawEventsUrl = (import.meta.env.VITE_RANGEX_EVENTS_URL as string | undefined) || '/ws'
+const rawTransport = (import.meta.env.VITE_RANGEX_EVENT_TRANSPORT as string | undefined) || 'ws'
 
 export const API_CONFIG: ApiEndpointsConfig = {
   baseUrl: normalizedBase,
@@ -28,13 +31,18 @@ export const API_CONFIG: ApiEndpointsConfig = {
   transport:
     rawTransport === 'sse' || rawTransport === 'ws' || rawTransport === 'auto'
       ? rawTransport
-      : 'auto',
-  requestTimeoutMs: 8000,
+      : 'ws',
+  requestTimeoutMs: 15000,
   routes: {
-    registerPackage: '/packages/arrive',
+    registerPackage: '/packages',
     intervals: '/intervals',
-    avlSnapshot: '/avl/snapshot',
-    analytics: '/analytics',
+    gaps: '/gaps',
+    stats: '/stats',
+    tree: '/tree',
+    events: '/events',
+    simulate: '/simulate',
+    bulkArrivals: '/bulk-arrivals',
+    reset: '/reset',
     health: '/health',
   },
 }

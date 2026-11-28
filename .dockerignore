@@ -1,0 +1,6 @@
+.git
+build
+frontend
+avl-visualizer
+*.bat
+*.md

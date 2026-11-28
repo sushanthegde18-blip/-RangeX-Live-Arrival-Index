@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react'
 import type {
+  AvlOperationTrace,
   AvlRotationEvent,
   AvlTreeSnapshot,
   BackendRuntimeMode,
@@ -7,6 +8,9 @@ import type {
   IntervalRange,
   PackageRegistrationRequest,
   PackageRegistrationResult,
+  ReplayEventRecord,
+  SimulateRequest,
+  SimulateResponse,
   WarehouseAnalytics,
 } from '../contracts/api'
 import type { AvlVisualizerMutationCue } from '../contracts/avl'
@@ -39,6 +43,7 @@ export interface RangeXContextValue {
   avlSnapshot: AvlTreeSnapshot | null
   analytics: WarehouseAnalytics | null
   lastArrival: PackageRegistrationResult | null
+  lastTrace: AvlOperationTrace | null
   lastMutationCue: AvlVisualizerMutationCue | null
   activeAnimation: ActivePackageAnimation | null
   clearActiveAnimation: (eventId: string) => void
@@ -52,8 +57,12 @@ export interface RangeXContextValue {
   fetchError: string | null
   submitError: string | null
   eventLogs: TelemetryLogEntry[]
-  submitPackageArrival: (request: PackageRegistrationRequest) => Promise<void>
+  eventsHistory: ReplayEventRecord[]
+  submitPackageArrival: (request: PackageRegistrationRequest) => Promise<PackageRegistrationResult | null>
+  simulateBatch: (request: SimulateRequest) => Promise<SimulateResponse | null>
+  resetBackendIndex: () => Promise<void>
   refreshAllFromBackend: () => Promise<void>
+  refreshEventsHistory: () => Promise<void>
   fixtureStepIndex: number
   fixtureStepTotal: number
   fixtureLabel: string

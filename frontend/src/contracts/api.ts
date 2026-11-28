@@ -1,11 +1,3 @@
-/**
- * Canonical TypeScript API contracts for RANGEX Member 2 (C++ Backend).
- *
- * Notice: No AVL algorithms or fake backend insertion logic live in the frontend.
- * Every state transition in Live mode is driven exclusively by confirmed
- * backend responses or verified backend stream events.
- */
-
 export type BackendRuntimeMode = 'live' | 'fixture'
 
 export type IntervalMutationType = 'CREATED' | 'EXTENDED' | 'MERGED' | 'DUPLICATE'
@@ -14,6 +6,7 @@ export type AvlRotationType = 'NONE' | 'LL' | 'RR' | 'LR' | 'RL'
 
 export interface IntervalRange {
   id?: string
+  nodeId?: string | number
   start: number
   end: number
   zone?: string
@@ -44,8 +37,28 @@ export interface AvlTreeSnapshot {
   nodes: AvlNodeSnapshot[]
   height: number
   nodeCount: number
+  truncated?: boolean
   revision?: number
   updatedAt?: string
+}
+
+export interface RotationStepTrace {
+  type: AvlRotationType
+  pivotNodeId?: string | number | null
+  pivotBalanceFactor?: number
+  affectedNodeIds?: Array<string | number>
+  reason?: string
+  preRotationSnapshot?: AvlTreeSnapshot | null
+  intermediateSnapshot?: AvlTreeSnapshot | null
+  afterSnapshot?: AvlTreeSnapshot | null
+}
+
+export interface AvlOperationTrace {
+  beforeSnapshot?: AvlTreeSnapshot | null
+  preBalanceSnapshot?: AvlTreeSnapshot | null
+  rotationSteps?: RotationStepTrace[]
+  finalSnapshot?: AvlTreeSnapshot | null
+  elapsedMicros?: number
 }
 
 export interface ThroughputSample {
@@ -56,17 +69,29 @@ export interface ThroughputSample {
 
 export interface WarehouseAnalytics {
   totalPackages: number
+  totalUniquePackages?: number
   activeIntervals: number
+  totalIntervals?: number
+  missingCount?: number
+  duplicateCount?: number
   mergedCount: number
   extendedCount: number
   createdCount: number
   compressionRatio: number
   avlHeight: number
   rotationCount: number
+  llRotations?: number
+  rrRotations?: number
+  lrRotations?: number
+  rlRotations?: number
   avgLookupMicros?: number | null
+  avgInsertMicros?: number | null
   minId?: number | null
   maxId?: number | null
+  latestPackageId?: number | null
+  systemStatus?: string
   recentThroughput?: ThroughputSample[]
+  revision?: number
   updatedAt?: string
 }
 
@@ -86,18 +111,122 @@ export interface PackageRegistrationResult {
   searchPath: Array<string | number>
   highlightedNodeIds: Array<string | number>
   rotation: AvlRotationEvent | null
+  trace?: AvlOperationTrace | null
   avlSnapshot?: AvlTreeSnapshot | null
   analytics?: WarehouseAnalytics | null
   timestamp: string
   eventId?: string
-  /** Strictly false for real backend responses; true only in opt-in UI visual fixture preview. */
   isFixture?: boolean
 }
 
 export interface IntervalsResponse {
   intervals: IntervalRange[]
+  totalCount?: number
+  missingCount?: number
+  minId?: number | null
+  maxId?: number | null
+  truncated?: boolean
   revision?: number
   updatedAt?: string
+}
+
+export interface MissingRangeItem {
+  start: number
+  end: number
+  count: number
+}
+
+export interface GapsResponse {
+  start: number
+  end: number
+  missingIntervals: MissingRangeItem[]
+  totalMissingIntervals: number
+  truncated: boolean
+  missingCount: number
+  presentCount: number
+  updatedAt?: string
+}
+
+export interface ReplayEventRecord {
+  seq: number
+  eventId: string
+  timestamp: string
+  packageId: number
+  mutationType: IntervalMutationType
+  targetInterval: IntervalRange
+  previousIntervals?: IntervalRange[]
+  intervals: IntervalRange[]
+  mergedFrom?: IntervalRange[]
+  rotation?: AvlRotationEvent | null
+  searchPath?: Array<string | number>
+  avlSnapshot?: AvlTreeSnapshot | null
+  analytics?: WarehouseAnalytics | null
+}
+
+export interface EventsHistoryResponse {
+  events: ReplayEventRecord[]
+  totalCount: number
+  offset: number
+}
+
+export type ArrivalPattern = 'random' | 'sequential' | 'spaced' | 'duplicate-heavy'
+
+export interface SimulateRequest {
+  count: number
+  pattern: ArrivalPattern
+  minId?: number
+  maxId?: number
+}
+
+export interface SimulateResponse {
+  simulatedCount: number
+  pattern: string
+  uniqueAdded: number
+  duplicates: number
+  merges: number
+  generatedIds: number[]
+  latestArrival?: PackageRegistrationResult | null
+  intervals: IntervalRange[]
+  avlSnapshot: AvlTreeSnapshot
+  analytics: WarehouseAnalytics
+}
+
+export interface BulkArrivalsRequest {
+  packageIds?: number[]
+  count?: number
+  pattern?: ArrivalPattern
+  minId?: number
+  maxId?: number
+  benchmarkOnly?: boolean
+}
+
+export interface BenchmarkResponse {
+  mode: string
+  benchmarkOnly: boolean
+  count: number
+  pattern: string
+  uniqueIds?: number
+  duplicateCount?: number
+  activeIntervals?: number
+  avlHeight?: number
+  rotationCount?: number
+  llRotations?: number
+  rrRotations?: number
+  lrRotations?: number
+  rlRotations?: number
+  insertTotalMs: number
+  avgInsertMicros: number
+  insertThroughputOpsSec?: number
+  lookupQueries?: number
+  lookupHits?: number
+  lookupTotalMs?: number
+  avgLookupMicros?: number
+  compressionRatio?: number
+  invariantsValid?: boolean
+  intervals?: IntervalRange[]
+  avlSnapshot?: AvlTreeSnapshot
+  analytics?: WarehouseAnalytics
+  timestamp?: string
 }
 
 export type BackendEventType =

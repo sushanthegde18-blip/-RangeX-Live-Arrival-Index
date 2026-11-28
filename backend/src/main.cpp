@@ -1,234 +1,324 @@
-#include "API.h"
-#include "WarehouseManager.h"
-#include "EventManager.h"
+#include "rangex/backend_service.hpp"
+
+#include <crow_all.h>
+
+#include <cstdlib>
 #include <iostream>
+#include <mutex>
 #include <string>
-#include <vector>
-#include <sstream>
+#include <unordered_set>
 
-using namespace rangex;
+namespace {
 
-void printServerBanner(int port) {
-    std::cout << "================================================================\n";
-    std::cout << "   RANGEX - INTELLIGENT WAREHOUSE ARRIVAL INDEX BACKEND         \n";
-    std::cout << "   C++17 AVL Tree Engine | Crow Framework | WebSockets          \n";
-    std::cout << "================================================================\n";
-    std::cout << "  HTTP REST API:    http://localhost:" << port << "/api\n";
-    std::cout << "  WebSocket Stream: ws://localhost:" << port << "/ws/events\n";
-    std::cout << "  SSE Stream:       http://localhost:" << port << "/api/events\n";
-    std::cout << "  Arrival Endpoint: POST http://localhost:" << port << "/api/packages/arrival\n";
-    std::cout << "  Tree Snapshot:    GET  http://localhost:" << port << "/api/tree\n";
-    std::cout << "  Intervals API:    GET  http://localhost:" << port << "/api/intervals\n";
-    std::cout << "  Missing API:      GET  http://localhost:" << port << "/api/missing?low=1&high=100\n";
-    std::cout << "  Search API:       GET  http://localhost:" << port << "/api/packages/search?id=5\n";
-    std::cout << "  Statistics API:   GET  http://localhost:" << port << "/api/statistics\n";
-    std::cout << "  Reset API:        POST http://localhost:" << port << "/api/reset\n";
-    std::cout << "================================================================\n";
-    std::cout << "  Ready to accept connections from React frontend visualizer...\n\n";
+crow::response makeJsonResponse(int statusCode, const nlohmann::json& body) {
+    crow::response res(statusCode, body.dump());
+    res.set_header("Content-Type", "application/json");
+    return res;
 }
 
-void runDemo(WarehouseManager& wm) {
-    wm.reset();
-    std::cout << "\n--- DEMO: RANGEX Problem Scenario & Bridge Merge ---\n";
-    std::cout << "Step 1: Warehouse receives packages 1, 2, 3, 6, 7, 8\n";
-    std::vector<long long> initial = {1, 2, 3, 6, 7, 8};
-    for (long long id : initial) {
-        wm.processPackageArrival(id);
-    }
-    std::cout << "Current Intervals: ";
-    for (const auto& iv : wm.getAllIntervals()) std::cout << iv.toString() << " ";
-    std::cout << "\nExpected: [1, 3] [6, 8]\n\n";
-
-    std::cout << "Step 2: Incoming package 4 arrives\n";
-    ArrivalResult r4 = wm.processPackageArrival(4);
-    std::cout << "Status: " << r4.status << " - " << r4.message << "\n";
-    std::cout << "Events captured: " << r4.events.size() << "\n";
-    std::cout << "Current Intervals: ";
-    for (const auto& iv : wm.getAllIntervals()) std::cout << iv.toString() << " ";
-    std::cout << "\nExpected: [1, 4] [6, 8]\n\n";
-
-    std::cout << "Step 3: Incoming package 5 arrives (BRIDGE MERGE)\n";
-    ArrivalResult r5 = wm.processPackageArrival(5);
-    std::cout << "Status: " << r5.status << " - " << r5.message << "\n";
-    std::cout << "Algorithm Events for package 5:\n";
-    for (const auto& ev : r5.events) {
-        std::cout << "  [" << ev.sequenceNumber << "] " << ev.eventType << ": " << ev.message << "\n";
-    }
-    std::cout << "Current Intervals: ";
-    for (const auto& iv : wm.getAllIntervals()) std::cout << iv.toString() << " ";
-    std::cout << "\nExpected: [1, 8]\n";
-    std::cout << "Tree Snapshot JSON:\n" << wm.getTreeSnapshotJson() << "\n\n";
-
-    auto stats = wm.getStatistics(1, 10);
-    std::cout << "Statistics:\n" << stats.toJson() << "\n\n";
+crow::response makeErrorResponse(int statusCode, const std::string& code, const std::string& message) {
+    return makeJsonResponse(statusCode, nlohmann::json{
+        {"error", code},
+        {"message", message}
+    });
 }
 
-int runCliMode(WarehouseManager& wm) {
-    std::cout << "========================================================\n";
-    std::cout << "   RANGEX - INTELLIGENT WAREHOUSE ARRIVAL INDEX         \n";
-    std::cout << "   Custom AVL Tree Core Engine (C++17)                  \n";
-    std::cout << "========================================================\n";
-    std::cout << "Commands:\n";
-    std::cout << "  insert <id>           - Process package arrival\n";
-    std::cout << "  contains <id>         - Query if package exists\n";
-    std::cout << "  intervals             - Display all consecutive intervals\n";
-    std::cout << "  missing <start> <end> - Query missing intervals in range\n";
-    std::cout << "  snapshot              - Output AVL tree JSON snapshot\n";
-    std::cout << "  stats                 - Show package and interval statistics\n";
-    std::cout << "  demo                  - Run problem demonstration\n";
-    std::cout << "  clear                 - Reset tree index\n";
-    std::cout << "  exit / quit           - Terminate engine\n";
-    std::cout << "========================================================\n\n";
-
-    std::string line;
-    std::cout << "rangex> ";
-    while (std::getline(std::cin, line)) {
-        if (line.empty()) {
-            std::cout << "rangex> ";
-            continue;
+bool parseInt64Strict(const nlohmann::json& val, int64_t& out) {
+    if (val.is_number_integer() || val.is_number_unsigned()) {
+        if (val.is_number_unsigned()) {
+            const uint64_t u = val.get<uint64_t>();
+            if (u > static_cast<uint64_t>(rangex::MAX_PACKAGE_ID)) return false;
+            out = static_cast<int64_t>(u);
+            return true;
         }
-
-        std::istringstream iss(line);
-        std::string cmd;
-        iss >> cmd;
-
-        if (cmd == "exit" || cmd == "quit") {
-            std::cout << "Exiting RANGEX Engine.\n";
-            break;
-        } else if (cmd == "insert") {
-            long long id;
-            if (iss >> id) {
-                auto res = wm.processPackageArrival(id);
-                std::cout << (res.success ? " [✓] Package ID " : " [!] Duplicate/Invalid package ID ")
-                          << id << " " << res.status << ": " << res.message << "\n";
-            } else {
-                std::cout << "Usage: insert <id>\n";
-            }
-        } else if (cmd == "contains") {
-            long long id;
-            if (iss >> id) {
-                auto s = wm.searchPackage(id);
-                std::cout << (s.exists ? "Package " + std::to_string(id) + " is PRESENT."
-                                       : "Package " + std::to_string(id) + " is NOT present.") << "\n";
-            } else {
-                std::cout << "Usage: contains <id>\n";
-            }
-        } else if (cmd == "intervals") {
-            auto intervals = wm.getAllIntervals();
-            std::cout << "Consecutive Intervals (" << intervals.size() << "):\n";
-            for (const auto& iv : intervals) {
-                std::cout << "  " << iv.toString() << " (length: " << iv.length() << ")\n";
-            }
-        } else if (cmd == "missing") {
-            long long qStart, qEnd;
-            if (iss >> qStart >> qEnd) {
-                auto missing = wm.getMissingIntervals(qStart, qEnd);
-                std::cout << "Missing Intervals in [" << qStart << ", " << qEnd << "] (" << missing.size() << "):\n";
-                for (const auto& iv : missing) {
-                    std::cout << "  " << iv.toString() << "\n";
-                }
-            } else {
-                std::cout << "Usage: missing <start> <end>\n";
-            }
-        } else if (cmd == "snapshot") {
-            std::cout << wm.getTreeSnapshotJson() << "\n";
-        } else if (cmd == "stats") {
-            std::cout << wm.getStatistics().toJson() << "\n";
-        } else if (cmd == "demo") {
-            runDemo(wm);
-        } else if (cmd == "clear") {
-            wm.reset();
-            std::cout << "Warehouse index cleared.\n";
-        } else {
-            std::cout << "Unknown command: " << cmd << ". Type 'demo', 'insert <id>', 'intervals', etc.\n";
-        }
-
-        std::cout << "rangex> ";
+        out = val.get<int64_t>();
+        return true;
     }
-    return 0;
+    return false;
 }
 
-int main(int argc, char* argv[]) {
-    int port = 8080;
-    bool demoMode = false;
-    bool cliMode = false;
-    bool snapshotMode = false;
-    bool batchMode = false;
+bool parseQueryInt64(const char* raw, int64_t& out) {
+    if (!raw || *raw == '\0') return false;
+    try {
+        std::size_t idx = 0;
+        const std::string s(raw);
+        const long long parsed = std::stoll(s, &idx, 10);
+        if (idx != s.size()) return false;
+        out = static_cast<int64_t>(parsed);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
 
-    for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
-        if (arg == "--port" && i + 1 < argc) {
-            port = std::stoi(argv[++i]);
-        } else if (arg == "--demo") {
-            demoMode = true;
-        } else if (arg == "--cli") {
-            cliMode = true;
-        } else if (arg == "--snapshot") {
-            snapshotMode = true;
-        } else if (arg == "--batch") {
-            batchMode = true;
-        } else if (arg == "--help" || arg == "-h") {
-            std::cout << "Usage: rangex_server [options]\n"
-                      << "  --port <port>   Specify server port (default: 8080)\n"
-                      << "  --demo          Run offline demonstration and exit\n"
-                      << "  --cli           Run interactive CLI terminal interface\n"
-                      << "  --snapshot      Output AVL tree JSON snapshot and exit\n"
-                      << "  --batch         Run JSON pipe API mode for stdin/stdout\n"
-                      << "  --help, -h      Display this help message\n";
-            return 0;
+std::size_t parseQuerySize(const char* raw, std::size_t fallback) {
+    if (!raw || *raw == '\0') return fallback;
+    try {
+        std::size_t idx = 0;
+        const std::string s(raw);
+        const unsigned long long parsed = std::stoull(s, &idx, 10);
+        if (idx != s.size()) return fallback;
+        return static_cast<std::size_t>(parsed);
+    } catch (...) {
+        return fallback;
+    }
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+    uint16_t port = 8080;
+    if (const char* envPort = std::getenv("RANGEX_PORT")) {
+        try {
+            const int p = std::stoi(envPort);
+            if (p > 0 && p <= 65535) port = static_cast<uint16_t>(p);
+        } catch (...) {}
+    }
+    for (int i = 1; i + 1 < argc; ++i) {
+        if (std::string(argv[i]) == "--port") {
+            try {
+                const int p = std::stoi(argv[i + 1]);
+                if (p > 0 && p <= 65535) port = static_cast<uint16_t>(p);
+            } catch (...) {}
         }
     }
 
-    EventManager eventManager;
-    WarehouseManager warehouseManager(eventManager);
+    rangex::BackendService service;
 
-    if (snapshotMode) {
-        std::cout << warehouseManager.getTreeSnapshotJson() << std::endl;
-        return 0;
-    }
+    std::mutex wsMutex;
+    std::unordered_set<crow::websocket::connection*> wsClients;
 
-    if (demoMode) {
-        runDemo(warehouseManager);
-        return 0;
-    }
-
-    if (cliMode) {
-        return runCliMode(warehouseManager);
-    }
-
-    if (batchMode) {
-        std::string line;
-        while (std::getline(std::cin, line)) {
-            if (line.empty()) continue;
-            std::istringstream iss(line);
-            std::string cmd;
-            iss >> cmd;
-            if (cmd == "insert") {
-                long long id;
-                iss >> id;
-                auto res = warehouseManager.processPackageArrival(id);
-                std::cout << res.toJson() << "\n" << std::flush;
-            } else if (cmd == "contains") {
-                long long id;
-                iss >> id;
-                auto s = warehouseManager.searchPackage(id);
-                std::cout << s.toJson() << "\n" << std::flush;
-            } else if (cmd == "snapshot") {
-                std::cout << warehouseManager.getTreeSnapshotJson() << "\n" << std::flush;
-            } else if (cmd == "clear") {
-                warehouseManager.reset();
-                std::cout << "{\"status\":\"cleared\"}\n" << std::flush;
-            } else if (cmd == "exit" || cmd == "quit") {
-                break;
+    auto broadcastEvent = [&](const nlohmann::json& frame) {
+        const std::string serialized = frame.dump();
+        std::lock_guard<std::mutex> lock(wsMutex);
+        for (auto* conn : wsClients) {
+            if (conn) {
+                conn->send_text(serialized);
             }
         }
-        return 0;
-    }
+    };
 
-    printServerBanner(port);
+    crow::App<crow::CORSHandler> app;
+    auto& cors = app.get_middleware<crow::CORSHandler>();
+    cors.global()
+        .origin("*")
+        .methods("GET"_method, "POST"_method, "OPTIONS"_method)
+        .headers("Content-Type", "Accept", "Origin");
 
-    API api(warehouseManager, eventManager, port);
-    api.run();
+    CROW_WEBSOCKET_ROUTE(app, "/ws")
+        .onopen([&](crow::websocket::connection& conn) {
+            std::lock_guard<std::mutex> lock(wsMutex);
+            wsClients.insert(&conn);
+        })
+        .onclose([&](crow::websocket::connection& conn, const std::string&, uint16_t) {
+            std::lock_guard<std::mutex> lock(wsMutex);
+            wsClients.erase(&conn);
+        })
+        .onmessage([&](crow::websocket::connection& conn, const std::string& data, bool) {
+            if (data == "ping") {
+                conn.send_text(nlohmann::json{
+                    {"type", "HEARTBEAT"},
+                    {"timestamp", rangex::BackendService::currentIsoTimestamp()}
+                }.dump());
+            }
+        });
 
+    CROW_ROUTE(app, "/api/health").methods("GET"_method)([&]() {
+        return makeJsonResponse(200, service.getHealth());
+    });
+
+    auto handlePackageArrival = [&](const crow::request& req) {
+        nlohmann::json body;
+        try {
+            body = nlohmann::json::parse(req.body);
+        } catch (...) {
+            return makeErrorResponse(400, "INVALID_JSON", "Request body must be valid JSON");
+        }
+
+        if (!body.is_object() || !body.contains("packageId")) {
+            return makeErrorResponse(400, "VALIDATION_ERROR", "Missing required integer field: packageId");
+        }
+
+        int64_t packageId = 0;
+        if (!parseInt64Strict(body["packageId"], packageId) || !rangex::BackendService::isValidPackageId(packageId)) {
+            return makeErrorResponse(
+                400,
+                "VALIDATION_ERROR",
+                "packageId must be an integer between 0 and 1000000000"
+            );
+        }
+
+        const std::string priority = body.value("priority", std::string("STANDARD"));
+        const std::string label = body.value("label", std::string(""));
+
+        try {
+            nlohmann::json result = service.arrivePackage(packageId, priority, label);
+            broadcastEvent(nlohmann::json{
+                {"type", "PACKAGE_ARRIVED"},
+                {"timestamp", result["timestamp"]},
+                {"eventId", result["eventId"]},
+                {"arrival", result}
+            });
+            return makeJsonResponse(200, result);
+        } catch (const std::exception& ex) {
+            return makeErrorResponse(400, "ENGINE_ERROR", ex.what());
+        }
+    };
+
+    CROW_ROUTE(app, "/api/packages").methods("POST"_method)(handlePackageArrival);
+    CROW_ROUTE(app, "/api/packages/arrive").methods("POST"_method)(handlePackageArrival);
+
+    CROW_ROUTE(app, "/api/intervals").methods("GET"_method)([&](const crow::request& req) {
+        const std::size_t offset = parseQuerySize(req.url_params.get("offset"), 0);
+        const std::size_t limit = parseQuerySize(req.url_params.get("limit"), 0);
+        const char* allFlag = req.url_params.get("all");
+        const bool includeAll = (allFlag != nullptr && std::string(allFlag) == "true");
+        return makeJsonResponse(200, service.getIntervals(offset, limit, includeAll));
+    });
+
+    CROW_ROUTE(app, "/api/gaps").methods("GET"_method)([&](const crow::request& req) {
+        int64_t start = 0;
+        int64_t end = 0;
+        if (!parseQueryInt64(req.url_params.get("start"), start) ||
+            !parseQueryInt64(req.url_params.get("end"), end)) {
+            return makeErrorResponse(
+                400,
+                "VALIDATION_ERROR",
+                "Query parameters 'start' and 'end' are required integers"
+            );
+        }
+        if (!rangex::BackendService::isValidPackageId(start) ||
+            !rangex::BackendService::isValidPackageId(end) ||
+            start > end) {
+            return makeErrorResponse(
+                400,
+                "VALIDATION_ERROR",
+                "Query range must satisfy 0 <= start <= end <= 1000000000"
+            );
+        }
+        const std::size_t limit = parseQuerySize(req.url_params.get("limit"), 500);
+        return makeJsonResponse(200, service.getGaps(start, end, limit));
+    });
+
+    CROW_ROUTE(app, "/api/stats").methods("GET"_method)([&]() {
+        return makeJsonResponse(200, service.getStats());
+    });
+    CROW_ROUTE(app, "/api/analytics").methods("GET"_method)([&]() {
+        return makeJsonResponse(200, service.getStats());
+    });
+
+    auto handleTree = [&](const crow::request& req) {
+        const std::size_t limit = parseQuerySize(req.url_params.get("limit"), 250);
+        return makeJsonResponse(200, service.getTreeSnapshot(limit));
+    };
+    CROW_ROUTE(app, "/api/tree").methods("GET"_method)(handleTree);
+    CROW_ROUTE(app, "/api/avl/snapshot").methods("GET"_method)(handleTree);
+
+    CROW_ROUTE(app, "/api/events").methods("GET"_method)([&](const crow::request& req) {
+        const std::size_t offset = parseQuerySize(req.url_params.get("offset"), 0);
+        const std::size_t limit = parseQuerySize(req.url_params.get("limit"), 250);
+        return makeJsonResponse(200, service.getEvents(offset, limit));
+    });
+
+    CROW_ROUTE(app, "/api/simulate").methods("POST"_method)([&](const crow::request& req) {
+        nlohmann::json body;
+        try {
+            body = req.body.empty() ? nlohmann::json::object() : nlohmann::json::parse(req.body);
+        } catch (...) {
+            return makeErrorResponse(400, "INVALID_JSON", "Request body must be valid JSON");
+        }
+
+        const int64_t rawCount = body.value("count", int64_t{10});
+        const std::string pattern = body.value("pattern", std::string("random"));
+        const int64_t minId = body.value("minId", int64_t{0});
+        const int64_t maxId = body.value("maxId", int64_t{250});
+
+        if (rawCount <= 0 || rawCount > 1000) {
+            return makeErrorResponse(400, "VALIDATION_ERROR", "count must be between 1 and 1000");
+        }
+
+        try {
+            nlohmann::json res = service.simulateArrivals(
+                static_cast<std::size_t>(rawCount),
+                pattern,
+                minId,
+                maxId
+            );
+            broadcastEvent(nlohmann::json{
+                {"type", "INTERVALS_UPDATED"},
+                {"timestamp", rangex::BackendService::currentIsoTimestamp()},
+                {"intervals", res["intervals"]}
+            });
+            broadcastEvent(nlohmann::json{
+                {"type", "AVL_SNAPSHOT_UPDATED"},
+                {"timestamp", rangex::BackendService::currentIsoTimestamp()},
+                {"avlSnapshot", res["avlSnapshot"]}
+            });
+            broadcastEvent(nlohmann::json{
+                {"type", "ANALYTICS_UPDATED"},
+                {"timestamp", rangex::BackendService::currentIsoTimestamp()},
+                {"analytics", res["analytics"]}
+            });
+            return makeJsonResponse(200, res);
+        } catch (const std::exception& ex) {
+            return makeErrorResponse(400, "VALIDATION_ERROR", ex.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/bulk-arrivals").methods("POST"_method)([&](const crow::request& req) {
+        nlohmann::json body;
+        try {
+            body = nlohmann::json::parse(req.body);
+        } catch (...) {
+            return makeErrorResponse(400, "INVALID_JSON", "Request body must be valid JSON");
+        }
+
+        try {
+            nlohmann::json res = service.bulkArrivals(body);
+            if (!res.value("benchmarkOnly", false)) {
+                broadcastEvent(nlohmann::json{
+                    {"type", "INTERVALS_UPDATED"},
+                    {"timestamp", rangex::BackendService::currentIsoTimestamp()},
+                    {"intervals", res["intervals"]}
+                });
+                broadcastEvent(nlohmann::json{
+                    {"type", "AVL_SNAPSHOT_UPDATED"},
+                    {"timestamp", rangex::BackendService::currentIsoTimestamp()},
+                    {"avlSnapshot", res["avlSnapshot"]}
+                });
+                broadcastEvent(nlohmann::json{
+                    {"type", "ANALYTICS_UPDATED"},
+                    {"timestamp", rangex::BackendService::currentIsoTimestamp()},
+                    {"analytics", res["analytics"]}
+                });
+            }
+            return makeJsonResponse(200, res);
+        } catch (const std::exception& ex) {
+            return makeErrorResponse(400, "VALIDATION_ERROR", ex.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/reset").methods("POST"_method)([&]() {
+        nlohmann::json res = service.reset();
+        broadcastEvent(nlohmann::json{
+            {"type", "INTERVALS_UPDATED"},
+            {"timestamp", res["timestamp"]},
+            {"intervals", res["intervals"]}
+        });
+        broadcastEvent(nlohmann::json{
+            {"type", "AVL_SNAPSHOT_UPDATED"},
+            {"timestamp", res["timestamp"]},
+            {"avlSnapshot", res["avlSnapshot"]}
+        });
+        broadcastEvent(nlohmann::json{
+            {"type", "ANALYTICS_UPDATED"},
+            {"timestamp", res["timestamp"]},
+            {"analytics", res["analytics"]}
+        });
+        return makeJsonResponse(200, res);
+    });
+
+    std::cout << "[RangeX] C++17 Crow REST & WebSocket server listening on http://127.0.0.1:" << port << "\n";
+    app.port(port).multithreaded().run();
     return 0;
 }

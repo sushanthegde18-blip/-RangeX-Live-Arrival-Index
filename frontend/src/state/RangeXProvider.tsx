@@ -8,6 +8,7 @@ import {
 } from 'react'
 import {
   RangeXApiError,
+  type AvlOperationTrace,
   type AvlTreeSnapshot,
   type BackendRuntimeMode,
   type BackendStreamEvent,
@@ -15,6 +16,9 @@ import {
   type IntervalRange,
   type PackageRegistrationRequest,
   type PackageRegistrationResult,
+  type ReplayEventRecord,
+  type SimulateRequest,
+  type SimulateResponse,
   type WarehouseAnalytics,
 } from '../contracts/api'
 import type { AvlVisualizerMutationCue } from '../contracts/avl'
@@ -37,6 +41,7 @@ function buildMutationCue(result: PackageRegistrationResult): AvlVisualizerMutat
     searchPath: result.searchPath,
     highlightedNodeIds: result.highlightedNodeIds,
     rotation: result.rotation,
+    trace: result.trace ?? null,
     timestamp: result.timestamp,
   }
 }
@@ -45,7 +50,7 @@ export function RangeXProvider({ children }: { children: ReactNode }) {
   const [mode, setModeState] = useState<BackendRuntimeMode>('live')
   const [connectionHealth, setConnectionHealth] = useState<ConnectionHealth>('connecting')
   const [streamStatusMessage, setStreamStatusMessage] = useState<string>(
-    'Initializing connection to Member 2 C++ backend...',
+    'Connecting to RangeX C++17 Crow engine...',
   )
 
   const [intervals, setIntervals] = useState<IntervalRange[]>([])
@@ -53,6 +58,7 @@ export function RangeXProvider({ children }: { children: ReactNode }) {
   const [avlSnapshot, setAvlSnapshot] = useState<AvlTreeSnapshot | null>(null)
   const [analytics, setAnalytics] = useState<WarehouseAnalytics | null>(null)
   const [lastArrival, setLastArrival] = useState<PackageRegistrationResult | null>(null)
+  const [lastTrace, setLastTrace] = useState<AvlOperationTrace | null>(null)
   const [lastMutationCue, setLastMutationCue] = useState<AvlVisualizerMutationCue | null>(null)
   const [activeAnimation, setActiveAnimation] = useState<ActivePackageAnimation | null>(null)
   const [selectedIntervalId, setSelectedIntervalId] = useState<string | null>(null)
@@ -62,9 +68,11 @@ export function RangeXProvider({ children }: { children: ReactNode }) {
   const [fetchError, setFetchError] = useState<string | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [eventLogs, setEventLogs] = useState<TelemetryLogEntry[]>([])
+  const [eventsHistory, setEventsHistory] = useState<ReplayEventRecord[]>([])
 
   const [fixtureStepIndex, setFixtureStepIndex] = useState<number>(0)
   const modeRef = useRef<BackendRuntimeMode>(mode)
+  const seenEventIdsRef = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     modeRef.current = mode
@@ -73,22 +81,46 @@ export function RangeXProvider({ children }: { children: ReactNode }) {
   const appendLog = useCallback((entry: Omit<TelemetryLogEntry, 'id'>) => {
     setEventLogs((prev) => [
       { ...entry, id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}` },
-      ...prev.slice(0, 29),
+      ...prev.slice(0, 49),
     ])
+  }, [])
+
+  const refreshEventsHistory = useCallback(async () => {
+    if (modeRef.current !== 'live') return
+    try {
+      const res = await rangexApi.fetchEvents(0, 500)
+      if (modeRef.current === 'live') {
+        setEventsHistory(res.events)
+      }
+    } catch {
+      // Non-fatal
+    }
   }, [])
 
   const applyConfirmedArrival = useCallback(
     (result: PackageRegistrationResult, source: 'BACKEND' | 'STREAM' | 'FIXTURE') => {
       const eventId = result.eventId ?? `arr-${result.packageId}-${Date.now()}`
+      if (result.eventId && seenEventIdsRef.current.has(result.eventId)) {
+        return
+      }
+      if (result.eventId) {
+        seenEventIdsRef.current.add(result.eventId)
+        if (seenEventIdsRef.current.size > 500) {
+          const oldest = seenEventIdsRef.current.values().next().value
+          if (oldest) seenEventIdsRef.current.delete(oldest)
+        }
+      }
+
       setPreviousIntervals(result.previousIntervals)
       setIntervals(result.intervals)
-      if (result.avlSnapshot !== undefined) {
+      if (result.avlSnapshot !== undefined && result.avlSnapshot !== null) {
         setAvlSnapshot(result.avlSnapshot)
       }
       if (result.analytics !== undefined && result.analytics !== null) {
         setAnalytics(result.analytics)
       }
       setLastArrival(result)
+      setLastTrace(result.trace ?? null)
       const cue = buildMutationCue({ ...result, eventId })
       setLastMutationCue(cue)
       setSelectedIntervalId(
@@ -107,22 +139,23 @@ export function RangeXProvider({ children }: { children: ReactNode }) {
       const rotSummary =
         result.rotation && result.rotation.type !== 'NONE'
           ? ` | AVL Rotation: ${result.rotation.type}`
-          : ' | No AVL rotation'
+          : ' | Balanced'
 
       appendLog({
         timestamp: result.timestamp,
         source,
-        message: `PKG #${result.packageId} -> ${result.mutationType} [${result.targetInterval.start},${result.targetInterval.end}]${rotSummary}`,
+        message: `PKG #${result.packageId} -> ${result.mutationType} [${result.targetInterval.start}, ${result.targetInterval.end}]${rotSummary}`,
       })
     },
     [appendLog],
   )
 
   const syncLiveBackend = useCallback(async () => {
-    const [intervalsRes, avlRes, analyticsRes] = await Promise.allSettled([
+    const [intervalsRes, avlRes, analyticsRes, eventsRes] = await Promise.allSettled([
       rangexApi.fetchIntervals(),
       rangexApi.fetchAvlSnapshot(),
       rangexApi.fetchAnalytics(),
+      rangexApi.fetchEvents(0, 500),
     ])
 
     if (modeRef.current !== 'live') return
@@ -159,6 +192,10 @@ export function RangeXProvider({ children }: { children: ReactNode }) {
       )
     }
 
+    if (eventsRes.status === 'fulfilled') {
+      setEventsHistory(eventsRes.value.events)
+    }
+
     if (errors.length > 0) {
       setFetchError(errors[0])
       setConnectionHealth('offline')
@@ -174,7 +211,7 @@ export function RangeXProvider({ children }: { children: ReactNode }) {
       appendLog({
         timestamp: new Date().toISOString(),
         source: 'BACKEND',
-        message: 'Synchronized intervals, AVL snapshot, and analytics from C++ backend',
+        message: 'Synchronized intervals, AVL snapshot, and telemetry from C++ backend',
       })
     }
 
@@ -210,6 +247,7 @@ export function RangeXProvider({ children }: { children: ReactNode }) {
         if (modeRef.current !== 'live') return
         if (event.type === 'PACKAGE_ARRIVED' && event.arrival) {
           applyConfirmedArrival(event.arrival, 'STREAM')
+          void refreshEventsHistory()
           return
         }
         if (event.type === 'INTERVALS_UPDATED' && event.intervals) {
@@ -233,15 +271,15 @@ export function RangeXProvider({ children }: { children: ReactNode }) {
       cancelled = true
       unsubscribe()
     }
-  }, [mode, syncLiveBackend, applyConfirmedArrival])
+  }, [mode, syncLiveBackend, applyConfirmedArrival, refreshEventsHistory])
 
   const submitPackageArrival = useCallback(
-    async (request: PackageRegistrationRequest) => {
+    async (request: PackageRegistrationRequest): Promise<PackageRegistrationResult | null> => {
       if (mode === 'fixture') {
         setSubmitError(
-          'Live submission is disabled inside Visual Fixture Mode. Switch to LIVE BACKEND to submit to Member 2 C++ API.',
+          'Live submission is disabled inside Visual Fixture Mode. Switch to LIVE BACKEND to submit to C++ API.',
         )
-        return
+        return null
       }
 
       setIsSubmitting(true)
@@ -252,23 +290,8 @@ export function RangeXProvider({ children }: { children: ReactNode }) {
         setConnectionHealth('connected')
         setFetchError(null)
         applyConfirmedArrival(result, 'BACKEND')
-
-        if (!result.avlSnapshot || !result.analytics) {
-          const [avlRes, analyticsRes] = await Promise.allSettled([
-            !result.avlSnapshot
-              ? rangexApi.fetchAvlSnapshot()
-              : Promise.resolve(result.avlSnapshot),
-            !result.analytics
-              ? rangexApi.fetchAnalytics()
-              : Promise.resolve(result.analytics),
-          ])
-          if (avlRes.status === 'fulfilled' && avlRes.value) {
-            setAvlSnapshot(avlRes.value)
-          }
-          if (analyticsRes.status === 'fulfilled' && analyticsRes.value) {
-            setAnalytics(analyticsRes.value)
-          }
-        }
+        void refreshEventsHistory()
+        return result
       } catch (err) {
         const message =
           err instanceof RangeXApiError
@@ -284,12 +307,108 @@ export function RangeXProvider({ children }: { children: ReactNode }) {
           message: `Rejected live submission for PKG #${request.packageId}`,
           detail: message,
         })
+        return null
       } finally {
         setIsSubmitting(false)
       }
     },
-    [mode, applyConfirmedArrival, appendLog],
+    [mode, applyConfirmedArrival, appendLog, refreshEventsHistory],
   )
+
+  const simulateBatch = useCallback(
+    async (request: SimulateRequest): Promise<SimulateResponse | null> => {
+      if (mode === 'fixture') {
+        setSubmitError('Batch simulation requires LIVE BACKEND mode.')
+        return null
+      }
+      setIsSubmitting(true)
+      setSubmitError(null)
+
+      try {
+        const sim = await rangexApi.simulateArrivals(request)
+        setConnectionHealth('connected')
+        setFetchError(null)
+        setPreviousIntervals(intervals)
+        setIntervals(sim.intervals)
+        setAvlSnapshot(sim.avlSnapshot)
+        setAnalytics(sim.analytics)
+        if (sim.latestArrival) {
+          if (sim.latestArrival.eventId) {
+            seenEventIdsRef.current.add(sim.latestArrival.eventId)
+          }
+          setLastArrival(sim.latestArrival)
+          setLastTrace(sim.latestArrival.trace ?? null)
+          setLastMutationCue(buildMutationCue(sim.latestArrival))
+          setActiveAnimation({
+            eventId: sim.latestArrival.eventId ?? `sim-${Date.now()}`,
+            packageId: sim.latestArrival.packageId,
+            mutationType: sim.latestArrival.mutationType,
+            targetInterval: sim.latestArrival.targetInterval,
+            rotation: sim.latestArrival.rotation,
+            startedAt: Date.now(),
+            isFixture: false,
+          })
+        }
+        appendLog({
+          timestamp: new Date().toISOString(),
+          source: 'BACKEND',
+          message: `Simulated ${sim.simulatedCount} (${sim.pattern}): +${sim.uniqueAdded} unique, ${sim.duplicates} dup, ${sim.merges} merges`,
+        })
+        void refreshEventsHistory()
+        return sim
+      } catch (err) {
+        const message =
+          err instanceof RangeXApiError
+            ? err.message
+            : err instanceof Error
+              ? err.message
+              : 'Batch simulation failed.'
+        setSubmitError(message)
+        appendLog({
+          timestamp: new Date().toISOString(),
+          source: 'ERROR',
+          message: 'Simulation failed',
+          detail: message,
+        })
+        return null
+      } finally {
+        setIsSubmitting(false)
+      }
+    },
+    [mode, intervals, appendLog, refreshEventsHistory],
+  )
+
+  const resetBackendIndex = useCallback(async () => {
+    if (mode === 'fixture') {
+      return
+    }
+    setIsSubmitting(true)
+    setSubmitError(null)
+    try {
+      const res = await rangexApi.resetIndex()
+      seenEventIdsRef.current.clear()
+      setPreviousIntervals([])
+      setIntervals(res.intervals)
+      setAvlSnapshot(res.avlSnapshot)
+      setAnalytics(res.analytics)
+      setLastArrival(null)
+      setLastTrace(null)
+      setLastMutationCue(null)
+      setActiveAnimation(null)
+      setSelectedIntervalId(null)
+      setEventsHistory([])
+      appendLog({
+        timestamp: new Date().toISOString(),
+        source: 'BACKEND',
+        message: 'Reset live AVL index and replay history',
+      })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to reset index'
+      setSubmitError(message)
+    } finally {
+      setIsSubmitting(false)
+    }
+  }, [mode, appendLog])
 
   const stepFixture = useCallback(
     (targetIndex: number) => {
@@ -309,6 +428,7 @@ export function RangeXProvider({ children }: { children: ReactNode }) {
         setAvlSnapshot(frame.avlSnapshot)
         setAnalytics(frame.analytics)
         setLastArrival(null)
+        setLastTrace(null)
         setLastMutationCue(null)
         setActiveAnimation(null)
         setSelectedIntervalId(frame.intervals[0]?.id ?? null)
@@ -329,6 +449,7 @@ export function RangeXProvider({ children }: { children: ReactNode }) {
       setSubmitError(null)
       setFetchError(null)
       setActiveAnimation(null)
+      seenEventIdsRef.current.clear()
 
       if (nextMode === 'fixture') {
         setConnectionHealth('offline')
@@ -340,6 +461,7 @@ export function RangeXProvider({ children }: { children: ReactNode }) {
         setAvlSnapshot(baseline.avlSnapshot)
         setAnalytics(baseline.analytics)
         setLastArrival(null)
+        setLastTrace(null)
         setLastMutationCue(null)
         setSelectedIntervalId(baseline.intervals[0]?.id ?? null)
         appendLog({
@@ -354,10 +476,11 @@ export function RangeXProvider({ children }: { children: ReactNode }) {
         setAvlSnapshot(null)
         setAnalytics(null)
         setLastArrival(null)
+        setLastTrace(null)
         setLastMutationCue(null)
         setSelectedIntervalId(null)
         setConnectionHealth('connecting')
-        setStreamStatusMessage('Connecting to Member 2 C++ backend...')
+        setStreamStatusMessage('Connecting to RangeX C++17 Crow backend...')
       }
     },
     [mode, appendLog],
@@ -389,6 +512,7 @@ export function RangeXProvider({ children }: { children: ReactNode }) {
       avlSnapshot,
       analytics,
       lastArrival,
+      lastTrace,
       lastMutationCue,
       activeAnimation,
       clearActiveAnimation,
@@ -402,8 +526,12 @@ export function RangeXProvider({ children }: { children: ReactNode }) {
       fetchError,
       submitError,
       eventLogs,
+      eventsHistory,
       submitPackageArrival,
+      simulateBatch,
+      resetBackendIndex,
       refreshAllFromBackend,
+      refreshEventsHistory,
       fixtureStepIndex,
       fixtureStepTotal: VISUAL_FIXTURE_STORYBOARD.length,
       fixtureLabel: currentFixtureFrame.label,
@@ -422,6 +550,7 @@ export function RangeXProvider({ children }: { children: ReactNode }) {
       avlSnapshot,
       analytics,
       lastArrival,
+      lastTrace,
       lastMutationCue,
       activeAnimation,
       clearActiveAnimation,
@@ -431,8 +560,12 @@ export function RangeXProvider({ children }: { children: ReactNode }) {
       fetchError,
       submitError,
       eventLogs,
+      eventsHistory,
       submitPackageArrival,
+      simulateBatch,
+      resetBackendIndex,
       refreshAllFromBackend,
+      refreshEventsHistory,
       fixtureStepIndex,
       currentFixtureFrame,
       stepFixture,
